@@ -18,6 +18,7 @@ class ViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         navigationItem.leftBarButtonItem = UIBarButtonItem(title: "Import", style: .plain, target: self, action: #selector(importPhoto))
+        navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .action, target: self, action: #selector(sharePhoto))
     }
     
     @objc func importPhoto() {
@@ -76,11 +77,76 @@ class ViewController: UIViewController {
             //store its face number as its tag
             vw.tag = index
             
+            vw.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(faceTapped)))
+            
             //color its border red and add it to the view
             vw.layer.borderColor = UIColor.red.cgColor
             vw.layer.borderWidth = 2
             imageView.addSubview(vw)
         }
+    }
+    
+    func renderBlurredFaces() {
+        
+        guard let currentUIImage = inputImage else { return }
+        guard let currentCGImage = currentUIImage.cgImage else { return }
+        let currentCIImage = CIImage(cgImage: currentCGImage)
+        
+        let filter = CIFilter(name: "CIPixellate")
+        filter?.setValue(currentCIImage, forKey: kCIInputImageKey)
+        filter?.setValue(12, forKey: kCIInputScaleKey)
+        
+        guard let outputImage = filter?.outputImage else { return }
+        
+        let blurredImage = UIImage(ciImage: outputImage)
+        
+        //prepare to render a new image at the full size we need
+        let renderer = UIGraphicsImageRenderer(size: currentUIImage.size)
+        
+        //commence rendering
+        let result = renderer.image { ctx in
+            
+            //draw the original image first
+            currentUIImage.draw(at: .zero)
+            
+            //create an empty clipping path that will hold our faces
+            let path = UIBezierPath()
+            
+            for face in detectedFaces {
+                //if this face should be blurred...
+                if face.blur {
+                    //calculate the position of this face in image coordinates
+                    let boundingBox = face.observation.boundingBox
+                    let size = CGSize(width: boundingBox.width * currentUIImage.size.width, height: boundingBox.height * currentUIImage.size.height)
+                    let origin = CGPoint(x: boundingBox.minX * currentUIImage.size.width, y: (1 - face.observation.boundingBox.minY) * currentUIImage.size.height - size.height)
+                    let rect = CGRect(origin: origin, size: size)
+                    
+                    //convert those coordinates to a path, and add it to our clipping path
+                    let miniPath = UIBezierPath(rect: rect)
+                    path.append(miniPath)
+                }
+            }
+            //if our clipping path isn't empty, activate it now then draw the blurred image with that mask
+            if !path.isEmpty {
+                path.addClip()
+                blurredImage.draw(at: .zero)
+            }
+        }
+        //show the result in our image view
+        imageView.image = result
+    }
+    
+    @objc func faceTapped(_ sender: UITapGestureRecognizer) {
+        guard let vw = sender.view else { return }
+        detectedFaces[vw.tag].blur = !detectedFaces[vw.tag].blur
+        renderBlurredFaces()
+    }
+    
+    @objc func sharePhoto() {
+        guard let img = imageView.image else { return }
+        let ac = UIActivityViewController(activityItems: [img], applicationActivities: nil)
+        
+        present(ac, animated: true)
     }
     
     override func viewDidLayoutSubviews() {
